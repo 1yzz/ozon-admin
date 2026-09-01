@@ -1,0 +1,18 @@
+[project]
+name = "ozon-admin-backend"
+version = "0.1.0"
+description = "Ozon FBS seller admin backend"
+requires-python = ">=3.12"
+dependencies = [
+    "ozonapi-async>=0.89.0",
+    "fastapi>=0.141.0",
+    "uvicorn[standard]>=0.52.0",
+    "sqlalchemy>=2.0.0",
+    "pydantic-settings>=2.15.0",
+    "httpx>=0.28.0",
+    "python-multipart>=0.0.20",
+    "redis>=8.1.0",
+]
+
+[tool.uv]
+package = false
