@@ -79,7 +79,11 @@ def _index_min_price(data: Any) -> str:
     if not data:
         return ""
     dumped = _dump(data)
-    return str(dumped.get("min_price") or dumped.get("min_price_value") or "")
+    raw = dumped.get("minimal_price") or dumped.get("min_price") or dumped.get("min_price_value") or ""
+    text = str(raw).strip()
+    if text in {"", "0", "0.0", "0.00"}:
+        return ""
+    return text
 
 
 @asynccontextmanager

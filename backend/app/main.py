@@ -4,14 +4,19 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-from . import queue
+from sqlalchemy import text
+
+from . import models, queue
 from .config import settings
 from .db import Base, engine
 from .routers import dashboard, orders, products, queue as queue_router, returns
 from .routers import settings as settings_router
 from .routers import uploads, warehouses
 
+_ = models
 Base.metadata.create_all(bind=engine)
+with engine.begin() as conn:
+    conn.execute(text("DROP TABLE IF EXISTS competitor_leads"))
 settings.upload_path
 
 

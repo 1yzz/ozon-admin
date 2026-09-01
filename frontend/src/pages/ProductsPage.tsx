@@ -120,7 +120,8 @@ export default function ProductsPage() {
                 <td>
                   <div>{item.price} {item.currency_code}</div>
                   <span className={`badge ${colorClass(item.color_index)}`}>{item.color_index_label || "无指数"}</span>
-                  {item.ozon_min_price && <div className="muted">站内最低 {item.ozon_min_price}</div>}
+                  {item.ozon_min_price && <div className="muted">Ozon 最低 {item.ozon_min_price}</div>}
+                  {item.external_min_price && <div className="muted">站外最低 {item.external_min_price}</div>}
                 </td>
                 <td>{item.stock_present} / 预留 {item.stock_reserved}</td>
                 <td>
