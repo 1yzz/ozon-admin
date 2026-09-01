@@ -195,7 +195,7 @@ export default function ProductsPage() {
               <>
                 <h2>复制商品</h2>
                 <p className="muted">
-                  用本地快照新建卡片，并在描述末尾加上短混淆串。若原商品已下架，接口成功后会立刻归档原卡，避免再点一次又复制出重复品。
+                  用本地快照新建独立卡片：按类目接口改「合并型号」和至少一项可变特性（如颜色名）。只改描述会被 Ozon 拒绝合并。原卡已下架时会立刻归档。
                 </p>
                 <div className="form-grid">
                   <label>新货号<input value={offerId} onChange={(e) => setOfferId(e.target.value)} /></label>

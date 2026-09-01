@@ -115,6 +115,7 @@ class CategoryAttributeOut(BaseModel):
     type: str
     dictionary_id: int
     group_name: str
+    is_aspect: bool = False
 
 
 class WarehouseOut(BaseModel):

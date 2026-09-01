@@ -178,6 +178,7 @@ export type CategoryAttribute = {
   type: string;
   dictionary_id: number;
   group_name: string;
+  is_aspect: boolean;
 };
 
 export const api = {

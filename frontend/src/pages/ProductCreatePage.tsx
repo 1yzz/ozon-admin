@@ -136,7 +136,7 @@ export default function ProductCreatePage() {
     }
   }
 
-  const required = attrs.filter((attr) => attr.is_required);
+  const required = attrs.filter((attr) => attr.is_required || attr.is_aspect);
 
   return (
     <section>
@@ -210,7 +210,7 @@ export default function ProductCreatePage() {
           )}
           {required.map((attr) => (
             <label key={attr.id}>
-              {attr.name}{attr.is_required ? " *" : ""}
+              {attr.name}{attr.is_required ? " *" : ""}{attr.is_aspect ? "（可变特性）" : ""}
               <input
                 value={attrValues[attr.id] || ""}
                 onChange={(e) => setAttrValues({ ...attrValues, [attr.id]: e.target.value })}

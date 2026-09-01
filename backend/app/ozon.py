@@ -362,10 +362,6 @@ def _new_offer_id(offer_id: str, suffix: str) -> str:
     return candidate[:50]
 
 
-_DESC_ATTR_IDS = {4191, 11254}
-_TEXT_DESC_ATTR_ID = 4191
-
-
 def _decoy_tag() -> str:
     return f"лот {secrets.token_hex(3)}"
 
@@ -400,31 +396,156 @@ def _is_http_url(value: str) -> bool:
     return value.startswith("http://") or value.startswith("https://")
 
 
-def _inject_description_decoy(snapshot: dict[str, Any], tag: str) -> None:
-    attrs = list(snapshot.get("attributes") or [])
-    cleaned: list[dict[str, Any]] = []
-    touched = False
-    for attr in attrs:
-        attr_id = int(attr.get("id") or 0)
-        values = attr.get("values") or []
-        raw = ""
-        if values and isinstance(values[0], dict):
-            raw = str(values[0].get("value") or "")
-        if attr_id == 4194 and raw and not _is_http_url(raw):
+def _attr_id(item: dict[str, Any]) -> int:
+    return int(item.get("id") or 0)
+
+
+def _attr_name(item: dict[str, Any]) -> str:
+    return str(item.get("name") or "").lower()
+
+
+def _is_stringish(meta: dict[str, Any]) -> bool:
+    return str(meta.get("type") or "").lower() in {"string", "multiline", "text"}
+
+
+def _is_free_text(meta: dict[str, Any]) -> bool:
+    return _is_stringish(meta) and int(meta.get("dictionary_id") or 0) == 0
+
+
+def _is_url_attr(meta: dict[str, Any]) -> bool:
+    return str(meta.get("type") or "").upper() == "URL"
+
+
+def _is_merge_model_attr(meta: dict[str, Any]) -> bool:
+    if meta.get("is_aspect"):
+        return False
+    name = _attr_name(meta)
+    return ("объедин" in name and "карточ" in name) or ("合并" in name and "卡" in name)
+
+
+def _is_description_attr(meta: dict[str, Any]) -> bool:
+    name = _attr_name(meta)
+    if "rich" in name:
+        return False
+    return any(key in name for key in ("аннотац", "описан", "annotation", "description"))
+
+
+def _append_unique_short(raw: str, tag: str) -> str:
+    text = (raw or "").strip()
+    if tag in text:
+        return text
+    return f"{text} {tag}".strip()
+
+
+def _first_value(attr: dict[str, Any]) -> dict[str, Any] | None:
+    values = attr.get("values")
+    if values and isinstance(values[0], dict):
+        return values[0]
+    return None
+
+
+def _text_attr(attr_id: int, value: str) -> dict[str, Any]:
+    return {
+        "id": attr_id,
+        "complex_id": 0,
+        "values": [{"dictionary_value_id": 0, "value": value}],
+    }
+
+
+def prepare_unique_attributes(
+    attributes: list[dict[str, Any]],
+    cat_attrs: list[dict[str, Any]],
+    *,
+    old_offer: str = "",
+    new_offer: str = "",
+    tag: str,
+) -> list[dict[str, Any]]:
+    """Make a copied card distinct enough for Ozon merge rules.
+
+    Ozon groups SKUs by the category's merge-into-one-card field. If that
+    field matches an existing product, every is_aspect value must differ.
+    """
+    meta = {_attr_id(item): item for item in cat_attrs if _attr_id(item)}
+    result: list[dict[str, Any]] = []
+    merge_touched = False
+    aspect_touched = False
+    desc_touched = False
+
+    for attr in attributes:
+        attr_id = _attr_id(attr)
+        info = meta.get(attr_id) or {}
+        first = _first_value(attr)
+        raw = str(first.get("value") or "") if first else ""
+        if _is_url_attr(info) and raw and not _is_http_url(raw):
             continue
-        if attr_id in _DESC_ATTR_IDS and values and isinstance(values[0], dict):
-            values[0]["value"] = _append_decoy(raw, tag)
-            touched = True
-        cleaned.append(attr)
-    if not touched:
-        cleaned.append(
-            {
-                "id": _TEXT_DESC_ATTR_ID,
-                "complex_id": 0,
-                "values": [{"dictionary_value_id": 0, "value": tag}],
-            }
-        )
-    snapshot["attributes"] = cleaned
+        if first is not None:
+            if old_offer and raw == old_offer and new_offer:
+                first["value"] = new_offer
+                raw = new_offer
+            if _is_description_attr(info) and _is_free_text(info):
+                first["value"] = _append_decoy(raw, tag)
+                desc_touched = True
+            elif _is_merge_model_attr(info) and _is_free_text(info):
+                first["value"] = _append_unique_short(raw or new_offer, tag)
+                merge_touched = True
+            elif info.get("is_aspect") and _is_free_text(info):
+                first["value"] = _append_unique_short(raw, tag)
+                aspect_touched = True
+        result.append(attr)
+
+    def _ensure(predicate, value: str, *, flag: str) -> None:
+        nonlocal merge_touched, aspect_touched, desc_touched
+        if flag == "merge" and merge_touched:
+            return
+        if flag == "aspect" and aspect_touched:
+            return
+        if flag == "desc" and desc_touched:
+            return
+        present = {_attr_id(item) for item in result}
+        for item in cat_attrs:
+            if not predicate(item) or not _is_free_text(item):
+                continue
+            item_id = _attr_id(item)
+            if item_id in present:
+                return
+            result.append(_text_attr(item_id, value))
+            if flag == "merge":
+                merge_touched = True
+            elif flag == "aspect":
+                aspect_touched = True
+            else:
+                desc_touched = True
+            return
+
+    _ensure(_is_description_attr, tag, flag="desc")
+    _ensure(_is_merge_model_attr, _append_unique_short(new_offer, tag), flag="merge")
+    _ensure(lambda item: bool(item.get("is_aspect")), tag, flag="aspect")
+    return result
+
+
+async def _prepare_snapshot_for_new_card(
+    db: Session,
+    snapshot: dict[str, Any],
+    *,
+    old_offer: str,
+    new_offer: str,
+    tag: str,
+) -> None:
+    cat_id = snapshot.get("description_category_id")
+    type_id = snapshot.get("type_id")
+    cat_attrs: list[dict[str, Any]] = []
+    if cat_id:
+        try:
+            cat_attrs = await category_attributes(db, int(cat_id), int(type_id or 0))
+        except Exception:
+            cat_attrs = []
+    snapshot["attributes"] = prepare_unique_attributes(
+        list(snapshot.get("attributes") or []),
+        cat_attrs,
+        old_offer=old_offer,
+        new_offer=new_offer,
+        tag=tag,
+    )
 
 
 async def _archive_source_if_removed(api: SellerAPI, db: Session, row: Product) -> bool:
@@ -449,10 +570,16 @@ async def copy_product(db: Session, product_id: int, new_offer_id: str | None, p
             snapshot["price"] = price or row.price or snapshot.get("price")
             snapshot["vat"] = _vat_value(row.vat or snapshot.get("vat"))
             snapshot["currency_code"] = row.currency_code or snapshot.get("currency_code")
-            _inject_description_decoy(snapshot, decoy)
+            await _prepare_snapshot_for_new_card(
+                db,
+                snapshot,
+                old_offer=row.offer_id,
+                new_offer=offer_id,
+                tag=decoy,
+            )
             task_id = await _import_from_snapshot(api, snapshot, offer_id, row.name, price)
             strategy = "import-snapshot"
-            message = "已用快照复制并写入混淆描述"
+            message = "已用快照复制，并区分合并型号与可变特性"
         else:
             resp = await api.product_import_by_sku(
                 ProductImportBySkuRequest(
@@ -676,11 +803,18 @@ async def republish_product(
         snapshot["price"] = price or row.price or snapshot.get("price")
         snapshot["vat"] = row.vat or snapshot.get("vat")
         snapshot["currency_code"] = row.currency_code or snapshot.get("currency_code")
+        await _prepare_snapshot_for_new_card(
+            db,
+            snapshot,
+            old_offer=row.offer_id,
+            new_offer=offer_id,
+            tag=_decoy_tag(),
+        )
         task_id = await _import_from_snapshot(api, snapshot, offer_id, name, price)
         job.strategy = "import-snapshot"
         job.task_id = task_id
         job.status = "submitted"
-        job.message = "已用本地快照重新创建商品，等待审核"
+        job.message = "已用本地快照重新创建商品，并区分合并型号与可变特性"
         db.commit()
         return {
             "strategy": job.strategy,
@@ -727,10 +861,9 @@ def _dump_job(job: RepublishJob) -> dict[str, Any]:
 
 def _description_attribute_id(attrs: list[dict[str, Any]]) -> int | None:
     for item in attrs:
-        name = str(item.get("name") or "").lower()
-        if any(key in name for key in ("описан", "аннотац", "annotation", "description")):
+        if _is_description_attr(item) and item.get("id") is not None:
             return int(item["id"])
-    return 4191
+    return None
 
 
 async def create_product(db: Session, payload: dict[str, Any]) -> dict[str, Any]:
@@ -743,21 +876,28 @@ async def create_product(db: Session, payload: dict[str, Any]) -> dict[str, Any]
     description_ru = pick(mapping, description_zh)
 
     attributes = list(payload.get("attributes") or [])
+    cat_attrs: list[dict[str, Any]] = []
+    try:
+        cat_attrs = await category_attributes(
+            db,
+            int(payload["description_category_id"]),
+            int(payload.get("type_id") or 0),
+        )
+    except Exception:
+        cat_attrs = []
     if description_ru:
-        try:
-            cat_attrs = await category_attributes(
-                db,
-                int(payload["description_category_id"]),
-                int(payload.get("type_id") or 0),
-            )
-            desc_id = _description_attribute_id(cat_attrs)
-        except Exception:
-            desc_id = 4191
+        desc_id = _description_attribute_id(cat_attrs)
         if desc_id:
             attributes = [item for item in attributes if item.get("id") != desc_id]
             attributes.append(
                 {"id": desc_id, "complex_id": 0, "values": [{"value": description_ru}]}
             )
+    attributes = prepare_unique_attributes(
+        attributes,
+        cat_attrs,
+        new_offer=str(payload["offer_id"]),
+        tag=_decoy_tag(),
+    )
 
     images = payload.get("images") or []
     async with ozon_client(db) as api:

@@ -133,6 +133,7 @@ async def attributes(
             type=str(item.get("type") or ""),
             dictionary_id=int(item.get("dictionary_id") or 0),
             group_name=item.get("group_name") or "",
+            is_aspect=bool(item.get("is_aspect")),
         )
         for item in items
         if item.get("id") is not None
